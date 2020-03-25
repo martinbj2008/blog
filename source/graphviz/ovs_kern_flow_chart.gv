@@ -1,0 +1,70 @@
+digraph g {
+graph [
+bgcolor = "lightblue"
+style="filled"
+gradientangle = 270];
+node [
+fontsize = "16"
+shape = "ellipse"
+style="filled"
+gradientangle=90
+];
+edge [
+];
+#--------------------------------------------------------------------------------------------------------------------------------
+
+## Part 1: packet input
+
+"ovs_dp_process_packet" [
+  gradientangle="90"
+  fillcolor = "gray"
+];
+
+"ovs_flow_tbl_lookup_stats" [
+  gradientangle="90"
+  fillcolor = "gray"
+];
+
+"ovs_execute_actions" [
+  gradientangle="90"
+  fillcolor = "gray"
+];
+
+"loop_mask_list" [
+  label = "&dp->table.mask_list"
+  fillcolor = "gray"
+];
+
+"masked_flow_lookup" [
+  fillcolor = "gray"
+];
+
+"ovs_flow_mask_key" [ fillcolor = "gray" ];
+"flow_hash" [ fillcolor = "gray" ];
+"find_bucket" [ fillcolor = "gray" ];
+"flow_cmp_masked_key" [ fillcolor = "gray" ];
+
+"hlist_loop_each_node" [
+  label = "hlist_for_each_entry_rcu flow_table.node"
+  fillcolor = "gray"
+];
+
+"ovs_dp_process_packet"-> "ovs_flow_tbl_lookup_stats" -> "loop_mask_list" -> "masked_flow_lookup" [
+id = 100, color="black"
+];
+
+"ovs_dp_process_packet"-> "ovs_execute_actions" [
+id = 100, color="black"
+];
+
+"masked_flow_lookup":e-> "loop_mask_list":e [ id = 100, color="black" ];
+"masked_flow_lookup"-> "ovs_flow_mask_key" [ id = 100, color="black" ];
+"masked_flow_lookup"-> "flow_hash" [ id = 100, color="black" ];
+"masked_flow_lookup"-> "find_bucket" [ id = 100, color="black" ];
+"masked_flow_lookup"-> "hlist_loop_each_node" [ id = 100, color="black" ];
+"hlist_loop_each_node"-> "flow_cmp_masked_key" [ id = 100, color="black" ];
+"flow_cmp_masked_key":e-> "hlist_loop_each_node":e [ id = 100, color="black" ];
+
+#--------------------------------------------------------------------------------------------------------------------------------
+
+}

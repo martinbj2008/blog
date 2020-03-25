@@ -1,0 +1,83 @@
+digraph g {
+graph [
+rankdir = "LR"
+bgcolor = "lightblue"
+style="filled"
+gradientangle = 270];
+node [
+fontsize = "16"
+shape = "ellipse"
+style="filled"
+gradientangle=90
+];
+edge [
+];
+#--------------------------------------------------------------------------------------------------------------------------------
+
+## Part 1: vport instance
+
+"dpcls" [
+  label = "<f0> struct dpcls\
+    | <f1> struct net_device *dev; \
+    | <f2> struct cmap_node node;
+    | <f3> odp_port_t in_port;
+    | <f4> struct cmap subtables_map;
+    | <f5> struct pvector subtables;
+  "
+  shape = "record"
+  gradientangle="90"
+  fillcolor = "gray"
+];
+
+"dpcls_subtable1" [
+  label = "<f0> struct dpcls_subtable\
+    | <f1> struct cmap_node cmap_node OVS_GUARDED \
+    | <f1> struct cmap rules; \
+    | <f1> uint32_t hit_cnt; \
+    | <f1> uint8_t mf_bits_set_unit0; \
+    | <f1> uint8_t mf_bits_set_unit1; \
+    | <f1> dpcls_subtable_lookup_func lookup_func; \
+    | <f1> uint64_t *mf_masks; \
+    | <f1> struct netdev_flow_key mask; \
+  "
+  shape = "record"
+  gradientangle="90"
+  fillcolor = "gray"
+];
+"dpcls_subtable2" [
+  label = "<f0> struct dpcls_subtable\
+    | <f1> struct cmap_node cmap_node OVS_GUARDED \
+    | <f1> struct cmap rules; \
+    | <f1> uint32_t hit_cnt; \
+    | <f1> uint8_t mf_bits_set_unit0; \
+    | <f1> uint8_t mf_bits_set_unit1; \
+    | <f1> dpcls_subtable_lookup_func lookup_func; \
+    | <f1> uint64_t *mf_masks; \
+    | <f1> struct netdev_flow_key mask; \
+  "
+  shape = "record"
+  gradientangle="90"
+  fillcolor = "gray"
+];
+
+"dpcls_subtable3" [
+  label = "<f0> struct dpcls_subtable\
+    | <f1> struct cmap_node cmap_node OVS_GUARDED \
+    | <f1> struct cmap rules; \
+    | <f1> uint32_t hit_cnt; \
+    | <f1> uint8_t mf_bits_set_unit0; \
+    | <f1> uint8_t mf_bits_set_unit1; \
+    | <f1> dpcls_subtable_lookup_func lookup_func; \
+    | <f1> uint64_t *mf_masks; \
+    | <f1> struct netdev_flow_key mask; \
+  "
+  shape = "record"
+  gradientangle="90"
+  fillcolor = "gray"
+];
+
+"dpcls":f5 -> "dpcls_subtable1":f0 -> "dpcls_subtable2":f0 -> "dpcls_subtable3":f0[
+id = 1011, color="blue"
+]
+#--------------------------------------------------------------------------------------------------------------------------------
+}
