@@ -3,11 +3,11 @@
 ## Source: https://github.com/hexojs/hexo/
 
 # Site
-title: Hexo
-subtitle: ''
+title: Kernel study
+subtitle: '好读书，不求甚解'
 description: ''
 keywords:
-author: John Doe
+author: Martin Zhang
 language: en
 timezone: ''
 
@@ -98,4 +98,6 @@ theme: landscape
 # Deployment
 ## Docs: https://hexo.io/docs/deployment.html
 deploy:
-  type: ''
+  - type: git
+    repo: git@github.com:martinbj2008/martinbj2008.github.io.git
+    branch: master
