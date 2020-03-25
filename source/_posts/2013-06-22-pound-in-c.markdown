@@ -1,0 +1,24 @@
+---
+layout: post
+title: "#在C中用法"
+date: 2007-11-30 00:00
+comments: true
+categories: [gcc]
+tags: [gcc]
+---
+
+###示例
+```c
+#include <stdio.h>
+
+#define printTypeSize(x) {printf("sizeof("#x")\t = %d\n", sizeof(x));}
+int main()
+{
+	    printTypeSize(char);
+	        return 0;
+}
+```
+
+###输出
+sizeof(char)	 = 1
+

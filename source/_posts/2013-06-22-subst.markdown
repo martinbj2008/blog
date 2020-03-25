@@ -1,0 +1,17 @@
+---
+layout: post
+title: "subst: replace string in Makefile"
+date: 2007-06-22 00:00
+comments: true
+categories: [gcc]
+tags: [makefile, subst]
+---
+
+```
+TARGETS =    111.cpp 222.cpp 333.cpp
+OTARGETS= $(subst cpp,o,$(TARGETS))
+LTARGETS= $(subst cpp,lo,$(TARGETS))
+%.o: %.cpp
+	g++ -c -o $@ $<
+all: objs libs
+```

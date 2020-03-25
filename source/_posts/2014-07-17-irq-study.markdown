@@ -1,0 +1,218 @@
+---
+layout: post
+title: "irq vector"
+date: 2014-07-17 10:35
+comments: true
+categories: [IRQs]
+tag: [IRQ]
+---
+
+### 中断处理过程：
+
+reg value-->irq(int) ---> struct irq_desc
+```
+==> 中断时的有一个寄存器会保存中断源的vector值.
+==> ==> `arch/x86/kernel/entry_64.S`调用函数`do_IRQ`.
+==> ==> ==> `do_IRQ`依据`vector_irq`和vector值, 找到对应的中断号,并调用`handle_irq`.
+==> ==> ==> ==> `handle_irq`通过函数irq_to_descdesc,可将中断号转化为`struct irq_desc`.
+==> ==> ==> ==> generic_handle_irq_desc(irq, desc);
+==> ==> ==> ==> ==> `generic_handle_irq_desc`调用 desc->handle_irq(irq, desc);
+```
+注:这里的handle_irq不是真正的中断处理函数,而是几大类中断控制器处理函数.
+如82599, msi等.
+#### `do_IRQ(struct pt_regs *regs)
+
+File: arch/x86/kernel/irq.c
+
+arch/x86/kernel/entry_64.S
+will call do_IRQ
+
+<!-- more -->
+```
+187 __visible unsigned int __irq_entry do_IRQ(struct pt_regs *regs)
+188 {
+189         struct pt_regs *old_regs = set_irq_regs(regs);
+190
+191         /* high bit used in ret_from_ code  */
+192         unsigned vector = ~regs->orig_ax;
+193         unsigned irq;
+194
+195         irq_enter();
+196         exit_idle();
+197
+198         irq = __this_cpu_read(vector_irq[vector]);
+199
+200         if (!handle_irq(irq, regs)) {
+201                 ack_APIC_irq();
+202
+203                 if (irq != VECTOR_RETRIGGERED) {
+204                         pr_emerg_ratelimited("%s: %d.%d No irq handler for vector (irq %d)\n",
+205                                              __func__, smp_processor_id(),
+206                                              vector, irq);
+207                 } else {
+208                         __this_cpu_write(vector_irq[vector], VECTOR_UNDEFINED);
+209                 }
+210         }
+211
+212         irq_exit();
+213
+214         set_irq_regs(old_regs);
+215         return 1;
+216 }
+```
+
+#### `bool handle_irq(unsigned irq, struct pt_regs *regs)`
+arch/x86/kernel/irq_64.c
+```
+ 77 bool handle_irq(unsigned irq, struct pt_regs *regs)
+ 78 {
+ 79         struct irq_desc *desc;
+ 80
+ 81         stack_overflow_check(regs);
+ 82
+ 83         desc = irq_to_desc(irq);
+ 84         if (unlikely(!desc))
+ 85                 return false;
+ 86
+ 87         generic_handle_irq_desc(irq, desc);
+ 88         return true;
+ 89 }
+```
+
+#### `generic_handle_irq_desc`
+include/linux/irqdesc.h
+```
+114 static inline void generic_handle_irq_desc(unsigned int irq, struct irq_desc *desc)
+115 {
+116         desc->handle_irq(irq, desc);
+117 }
+```
+
+### desc里的`handle_irq`对应哪些函数?
+
+`handle_level_irq`和`handle_edge_irq`等
+```
+arch/x86/kernel/i8259.c:    irq_set_chip_and_handler_name(irq, &i8259A_chip, handle_level_irq,
+arch/x86/kernel/apic/io_apic.c:	irq_set_chip_and_handler_name(irq, chip, hdl,
+arch/x86/kernel/apic/io_apic.c:	irq_set_chip_and_handler_name(0, &ioapic_chip, handle_edge_irq,
+arch/x86/kernel/apic/io_apic.c:	irq_set_chip_and_handler_name(irq, &lapic_chip, handle_edge_irq,
+arch/x86/kernel/apic/io_apic.c:	irq_set_chip_and_handler_name(irq, chip, handle_edge_irq, "edge");
+arch/x86/kernel/apic/io_apic.c:	irq_set_chip_and_handler_name(irq, &dmar_msi_type, handle_edge_irq,
+arch/x86/kernel/apic/io_apic.c:	irq_set_chip_and_handler_name(irq, chip, handle_edge_irq, "edge");
+arch/x86/kernel/apic/io_apic.c:	irq_set_chip_and_handler_name(irq, &ht_irq_chip,
+arch/x86/kernel/apic/io_apic.c:	irq_set_chip_and_handler_name(0, &ioapic_chip, handle_edge_irq,
+arch/x86/kernel/irqinit.c:	irq_set_chip_and_handler_name(i, chip, handle_level_irq, name);
+```
+#### for example:  8259A
+
+```
+==> make_8259A_irq
+==> ==> irq_set_chip_and_handler
+==> ==> ==> irq_set_chip_and_handler_name
+==> ==> ==> ==> irq_set_chip
+==> ==> ==> ==> ==> desc = irq_get_desc_buslock
+==> ==> ==> ==> __irq_set_handler
+==> ==> ==> ==> ==> desc = irq_get_desc_buslock
+==> ==> ==> ==> ==> desc->handle_irq = handle
+```
+
+#####  `make_8259A_irq`
+arch/x86/kernel/i8259.c
+```
+107 void make_8259A_irq(unsigned int irq)
+108 {
+109         disable_irq_nosync(irq);
+110         irq_set_chip_and_handler(irq, &i8259A_chip, handle_level_irq);
+111         enable_irq(irq);
+112 }
+```
+
+#### `irq_set_chip_and_handler`
+include/linux/irq.h
+```
+452 static inline void irq_set_chip_and_handler(unsigned int irq, struct irq_chip *chip,
+453                                             irq_flow_handler_t handle)
+454 {
+455         irq_set_chip_and_handler_name(irq, chip, handle, NULL);
+456 }
+```
+
+#### `irq_set_chip_and_handler_name`
+kernel/irq/chip.c
+```
+726 void
+727 irq_set_chip_and_handler_name(unsigned int irq, struct irq_chip *chip,
+728                               irq_flow_handler_t handle, const char *name)
+729 {
+730         irq_set_chip(irq, chip);
+731         __irq_set_handler(irq, handle, 0, name);
+732 }
+733 EXPORT_SYMBOL_GPL(irq_set_chip_and_handler_name);
+```
+```
+ 23 /**
+ 24  *      irq_set_chip - set the irq chip for an irq
+ 25  *      @irq:   irq number
+ 26  *      @chip:  pointer to irq chip description structure
+ 27  */
+ 28 int irq_set_chip(unsigned int irq, struct irq_chip *chip)
+ 29 {
+ 30         unsigned long flags;
+ 31         struct irq_desc *desc = irq_get_desc_lock(irq, &flags, 0);
+ 32 
+ 33         if (!desc)
+ 34                 return -EINVAL;
+ 35 
+ 36         if (!chip)
+ 37                 chip = &no_irq_chip;
+ 38 
+ 39         desc->irq_data.chip = chip;
+ 40         irq_put_desc_unlock(desc, flags);
+ 41         /*
+ 42          * For !CONFIG_SPARSE_IRQ make the irq show up in
+ 43          * allocated_irqs.
+ 44          */
+ 45         irq_mark_irq(irq);
+ 46         return 0;
+ 47 }  
+ 48 EXPORT_SYMBOL(irq_set_chip);
+```
+```
+688 void
+689 __irq_set_handler(unsigned int irq, irq_flow_handler_t handle, int is_chained,
+690                   const char *name)
+691 {
+692         unsigned long flags;
+693         struct irq_desc *desc = irq_get_desc_buslock(irq, &flags, 0);
+694
+695         if (!desc)
+696                 return;
+697
+698         if (!handle) {
+699                 handle = handle_bad_irq;
+700         } else {
+701                 if (WARN_ON(desc->irq_data.chip == &no_irq_chip))
+702                         goto out;
+703         }
+704
+705         /* Uninstall? */
+706         if (handle == handle_bad_irq) {
+707                 if (desc->irq_data.chip != &no_irq_chip)
+708                         mask_ack_irq(desc);
+709                 irq_state_set_disabled(desc);
+710                 desc->depth = 1;
+711         }
+712         desc->handle_irq = handle;
+713         desc->name = name;
+714
+715         if (handle != handle_bad_irq && is_chained) {
+716                 irq_settings_set_noprobe(desc);
+717                 irq_settings_set_norequest(desc);
+718                 irq_settings_set_nothread(desc);
+719                 irq_startup(desc, true);
+720         }
+721 out:
+722         irq_put_desc_busunlock(desc, flags);
+723 }
+724 EXPORT_SYMBOL_GPL(__irq_set_handler);
+```

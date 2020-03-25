@@ -1,0 +1,320 @@
+---
+layout: post
+title: "the mem_init on mips(octean)"
+date: 2011-10-07 00:00
+comments: true
+categories: [memory]
+tags: [mem, bootmem, kernel, octean]
+---
+<!-- more -->
+
+arch/mips/kernel/setup.c
+====================================
+```c
+static void __init bootmem_init(void)
+{
+unsigned long reserved_end;
+unsigned long mapstart = ~0UL;
+unsigned long bootmap_size;
+int i;
+ 
+/*
+* Init any data related to initrd. It's a nop if INITRD is
+* not selected. Once that done we can determine the low bound
+* of usable memory.
+*/
+reserved_end = max(init_initrd(),
+  (unsigned long) PFN_UP(__pa_symbol(&_end)));
+ 
+/*
+* max_low_pfn is not a number of pages. The number of pages
+* of the system is given by 'max_low_pfn - min_low_pfn'.
+*/
+min_low_pfn = ~0UL;
+max_low_pfn = 0;
+ 
+/*
+* Find the highest page frame number we have available.
+*/
+for (i = 0; i < boot_mem_map.nr_map; i++) {
+unsigned long start, end;
+ 
+if (boot_mem_map.map[i].type != BOOT_MEM_RAM)
+continue;
+ 
+start = PFN_UP(boot_mem_map.map[i].addr);
+end = PFN_DOWN(boot_mem_map.map[i].addr
++ boot_mem_map.map[i].size);
+ 
+if (end > max_low_pfn)
+max_low_pfn = end;
+if (start < min_low_pfn)
+min_low_pfn = start;
+if (end <= reserved_end)
+continue;
+if (start >= mapstart)
+continue;
+mapstart = max(reserved_end, start);
+}
+ 
+if (min_low_pfn >= max_low_pfn)
+panic("Incorrect memory mapping !!!");
+if (min_low_pfn > ARCH_PFN_OFFSET) {
+pr_info("Wasting %lu bytes for tracking %lu unused pages\n",
+(min_low_pfn - ARCH_PFN_OFFSET) * sizeof(struct page),
+min_low_pfn - ARCH_PFN_OFFSET);
+} else if (min_low_pfn < ARCH_PFN_OFFSET) {
+pr_info("%lu free pages won't be used\n",
+ARCH_PFN_OFFSET - min_low_pfn);
+}
+min_low_pfn = ARCH_PFN_OFFSET;
+ 
+/*
+* Determine low and high memory ranges
+*/
+max_pfn = max_low_pfn;
+if (max_low_pfn > PFN_DOWN(HIGHMEM_START)) {
+#ifdef CONFIG_HIGHMEM
+highstart_pfn = PFN_DOWN(HIGHMEM_START);
+highend_pfn = max_low_pfn;
+#endif
+max_low_pfn = PFN_DOWN(HIGHMEM_START);
+}
+ 
+/*
+* Initialize the boot-time allocator with low memory only.
+*/
+bootmap_size = init_bootmem_node(NODE_DATA(0), mapstart,
+min_low_pfn, max_low_pfn);
+ 
+ 
+for (i = 0; i < boot_mem_map.nr_map; i++) {
+unsigned long start, end;
+ 
+start = PFN_UP(boot_mem_map.map[i].addr);
+end = PFN_DOWN(boot_mem_map.map[i].addr
++ boot_mem_map.map[i].size);
+ 
+if (start <= min_low_pfn)
+start = min_low_pfn;
+if (start >= end)
+continue;
+ 
+#ifndef CONFIG_HIGHMEM
+if (end > max_low_pfn)
+end = max_low_pfn;
+ 
+/*
+* ... finally, is the area going away?
+*/
+if (end <= start)
+continue;
+#endif
+ 
+add_active_range(0, start, end);
+}
+ 
+/*
+* Register fully available low RAM pages with the bootmem allocator.
+*/
+for (i = 0; i < boot_mem_map.nr_map; i++) {
+unsigned long start, end, size;
+ 
+/*
+* Reserve usable memory.
+*/
+if (boot_mem_map.map[i].type != BOOT_MEM_RAM)
+continue;
+ 
+start = PFN_UP(boot_mem_map.map[i].addr);
+end   = PFN_DOWN(boot_mem_map.map[i].addr
+   + boot_mem_map.map[i].size);
+/*
+* We are rounding up the start address of usable memory
+* and at the end of the usable range downwards.
+*/
+if (start >= max_low_pfn)
+continue;
+if (start < reserved_end)
+start = reserved_end;
+if (end > max_low_pfn)
+end = max_low_pfn;
+ 
+/*
+* ... finally, is the area going away?
+*/
+if (end <= start)
+continue;
+size = end - start;
+ 
+/* Register lowmem ranges */
+free_bootmem(PFN_PHYS(start), size << PAGE_SHIFT);
+memory_present(0, start, end);
+}
+ 
+/*
+* Reserve the bootmap memory.
+*/
+reserve_bootmem(PFN_PHYS(mapstart), bootmap_size, BOOTMEM_DEFAULT);
+ 
+/*
+* Reserve initrd memory if needed.
+*/
+finalize_initrd();
+}
+ 
+ 
+ 
+struct node_active_region {
+unsigned long start_pfn;
+unsigned long end_pfn;
+int nid;
+};
+ 
+ 
+ 
+mm/page_alloc.c
+===================
+  static struct node_active_region __meminitdata early_node_map[MAX_ACTIVE_REGIONS];
+ 
+ 
+ 
+/**
+ * add_active_range - Register a range of PFNs backed by physical memory
+ * @nid: The node ID the range resides on
+ * @start_pfn: The start PFN of the available physical memory
+ * @end_pfn: The end PFN of the available physical memory
+ *
+ * These ranges are stored in an early_node_map[] and later used by
+ * free_area_init_nodes() to calculate zone sizes and holes. If the
+ * range spans a memory hole, it is up to the architecture to ensure
+ * the memory is not freed by the bootmem allocator. If possible
+ * the range being registered will be merged with existing ranges.
+ */
+void __init add_active_range(unsigned int nid, unsigned long start_pfn,
+unsigned long end_pfn)
+{
+int i;
+ 
+mminit_dprintk(MMINIT_TRACE, "memory_register",
+"Entering add_active_range(%d, %#lx, %#lx) "
+"%d entries of %d used\n",
+nid, start_pfn, end_pfn,
+nr_nodemap_entries, MAX_ACTIVE_REGIONS);
+ 
+mminit_validate_memmodel_limits(&start_pfn, &end_pfn);
+ 
+/* Merge with existing active regions if possible */
+for (i = 0; i < nr_nodemap_entries; i++) {
+if (early_node_map[i].nid != nid)
+continue;
+ 
+/* Skip if an existing region covers this new one */
+if (start_pfn >= early_node_map[i].start_pfn &&
+end_pfn <= early_node_map[i].end_pfn)
+return;
+ 
+/* Merge forward if suitable */
+if (start_pfn <= early_node_map[i].end_pfn &&
+end_pfn > early_node_map[i].end_pfn) {
+early_node_map[i].end_pfn = end_pfn;
+return;
+}
+ 
+/* Merge backward if suitable */
+if (start_pfn < early_node_map[i].start_pfn &&
+end_pfn >= early_node_map[i].start_pfn) {
+early_node_map[i].start_pfn = start_pfn;
+return;
+}
+}
+ 
+/* Check that early_node_map is large enough */
+if (i >= MAX_ACTIVE_REGIONS) {
+printk(KERN_CRIT "More than %d memory regions, truncating\n",
+MAX_ACTIVE_REGIONS);
+return;
+}
+ 
+early_node_map[i].nid = nid;
+early_node_map[i].start_pfn = start_pfn;
+early_node_map[i].end_pfn = end_pfn;
+nr_nodemap_entries = i + 1;
+}
+ 
+ 
+ 
+ 
+ 
+arch/mips/mm/init.c
+====================================
+ 
+ 
+void __init paging_init(void)
+{
+unsigned long max_zone_pfns[MAX_NR_ZONES];
+unsigned long lastpfn __maybe_unused;
+ 
+pagetable_init();
+ 
+#ifdef CONFIG_HIGHMEM
+kmap_init();
+#endif
+kmap_coherent_init();
+ 
+#ifdef CONFIG_ZONE_DMA
+max_zone_pfns[ZONE_DMA] = MAX_DMA_PFN;
+#endif
+#ifdef CONFIG_ZONE_DMA32
+max_zone_pfns[ZONE_DMA32] = MAX_DMA32_PFN;
+#endif
+max_zone_pfns[ZONE_NORMAL] = max_low_pfn;
+lastpfn = max_low_pfn;
+#ifdef CONFIG_HIGHMEM
+max_zone_pfns[ZONE_HIGHMEM] = highend_pfn;
+lastpfn = highend_pfn;
+ 
+if (cpu_has_dc_aliases && max_low_pfn != highend_pfn) {
+printk(KERN_WARNING "This processor doesn't support highmem."
+      " %ldk highmem ignored\n",
+      (highend_pfn - max_low_pfn) << (PAGE_SHIFT - 10));
+max_zone_pfns[ZONE_HIGHMEM] = max_low_pfn;
+lastpfn = max_low_pfn;
+}
+#endif
+ 
+free_area_init_nodes(max_zone_pfns);
+}
+ 
+#ifdef CONFIG_64BIT
+static struct kcore_list kcore_kseg0;
+#endif
+ 
+ 
+arch/mips/kernel.c
+================================
+void __init setup_arch(char **cmdline_p)
+{
+cpu_probe();
+prom_init();<=====
+ 
+#ifdef CONFIG_EARLY_PRINTK
+setup_early_printk();
+#endif
+cpu_report();
+check_bugs_early();
+ 
+#if defined(CONFIG_VT)
+#if defined(CONFIG_VGA_CONSOLE)
+conswitchp = &vga_con;
+#elif defined(CONFIG_DUMMY_CONSOLE)
+conswitchp = &dummy_con;
+#endif
+#endif
+ 
+arch_mem_init(cmdline_p);<=====
+ 
+resource_init();
+plat_smp_setup();
+}
+```

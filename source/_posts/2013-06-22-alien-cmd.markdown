@@ -1,0 +1,17 @@
+---
+layout: post
+title: "debian/ubuntu 下安装rpm软件包"
+date: 2007-07-30 00:00
+comments: true
+categories: [others]
+---
+<!-- more -->
+
+debian/ubuntu 下安装rpm软件包
+在linux系统的软件中，有很多是rpm的，这种软件包在Ubuntu不能直接使用,若真的要使用，那要把rpm包转换成deb包     
+1. 装个将rpm包转换为deb包的小工具alien 
+sudo apt-get install alien    
+2. 进入rpm所在的目录，输入命令 
+alien xxx.rpm（转换为deb包的rpm文件） 
+即可在本目录下生成一个xxx.deb 
+然后双击执行即可

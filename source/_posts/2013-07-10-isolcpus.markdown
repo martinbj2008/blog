@@ -1,0 +1,182 @@
+---
+layout: post
+title: "draft: isolcpus"
+date: 2013-07-10 00:00
+comments: true
+categories: [sched]
+tags: [kernel, sched]
+---
+
+Isolcpus
+
+## kthread has wrong affinity when use isolcpus in bootline
+
+when boot kernel with isolcpus in grub command lines, only init thread has expected affinity, which exclude the isolated cpus.
+
+while the kthreads affinity still includes isolated cpus.
+
+<!-- more -->
+
+### Test snapshot
+Test with x86_64 and boot parameter: `isolcpus=2,3 `
+
+#### init thread affinity is right
+```
+junwei@junwei:~> taskset -p 1 pid 1’s current affinity mask: 3 <== init thread(pid 1) has expected affinity.
+junwei@junwei:~>
+```
+
+#### kthread affinity is wrong !
+```
+junwei@junwei:~> taskset  -p 2
+pid 2's current affinity mask: f  <== !!! kthreadd thread(pid 1) has expected affinity.
+```
+#### kthread `vnb` affinity is also wrong !
+
+```
+junwei@junwei:~> ps axuw|grep ksocket
+root      1521  0.0  0.0      0     0 ?        S    15:47   0:00 [ksocket-xmit]
+root      1522  0.0  0.0      0     0 ?        S    15:47   0:00 [ksocket-recv]
+root      1884  0.0  0.0   9152   684 ttyS0    S+   15:47   0:00 grep ksocket
+junwei@junwei:~>
+junwei@junwei:~> taskset  -p 1521
+pid 1521's current affinity mask: f
+junwei@junwei:~> taskset  -p 1522
+pid 1522's current affinity mask: f
+```
+
+NOTE: even we forcely set kthread with right affinity in /etc/rc, the vnb thread still has wrong affinity.
+
+I think it is a kernel bug.
+See discription about isolcpus in kernel Documentation/kernel-parameters.txt.
+```
+1257         isolcpus=       [KNL,SMP] Isolate CPUs from the general scheduler.
+1258                         Format:
+1259                         <cpu number>,...,<cpu number>
+1260                         or
+1261                         <cpu number>-<cpu number>
+1262                         (must be a positive range in ascending order)
+1263                         or a mixture
+1264                         <cpu number>,...,<cpu number>-<cpu number>
+1265
+1266                         This option can be used to specify one or more CPUs
+1267                         to isolate from the general SMP balancing and scheduling
+1268                         algorithms. You can move a process onto or off an
+1269                         "isolated" CPU via the CPU affinity syscalls or cpuset.
+1270                         <cpu number> begins at 0 and the maximum value is
+1271                         "number of CPUs in system - 1".
+1272
+1273                         This option is the preferred way to isolate CPUs. The
+1274                         alternative -- manually setting the CPU mask of all
+1275                         tasks in the system -- can cause problems and
+1276                         suboptimal load balancer performance.
+```
+
+
+## Analysis:
+this is a common problem, kernel 3.10 is used to analysis it.
+
+why kthread(pid) has wrong affinity.
+when kernel boot, pid0 create process init(pid1) and kthread process(pid2). pid1 and pid2 is created by `rest_init` in init/main.c
+
+All the kernel threads created by `kthread_create`/`kthread_run`, will be the children of the kthread process(pid2).
+
+In kernel source, kthread(pid2) is identitied by ‘kthread_task’, which is run with funciton ‘kthreadd’.
+
+mainly of function ‘kthread’ is a infinite loop, check if there is a new kernel thread need to be created, if yes, create them.
+
+before start the infinite loop, kernel chagne the cpumask/affinity of pid2, see line 453 file kernel/kthread.c.
+```c
+364 static noinline void __init_refok rest_init(void)
+365 {
+366         int pid;
+367
+368         rcu_scheduler_starting();
+369         /*
+370          * We need to spawn init first so that it obtains pid 1, however
+371          * the init task will end up wanting to create kthreads, which, if
+372          * we schedule it before we create kthreadd, will OOPS.
+373          */
+374         kernel_thread(kernel_init, NULL, CLONE_FS | CLONE_SIGHAND); <==  pid 1
+375         numa_default_policy();
+376         pid = kernel_thread(kthreadd, NULL, CLONE_FS | CLONE_FILES); <== pid 2
+377         rcu_read_lock();
+378         kthreadd_task = find_task_by_pid_ns(pid, &init_pid_ns);
+379         rcu_read_unlock();
+380         complete(&kthreadd_done);
+```
+
+In function ‘kthreadd’, file kernel/kthread.c
+
+```c
+446 int kthreadd(void *unused)
+447 {
+448         struct task_struct *tsk = current;
+449
+450         /* Setup a clean context for our children to inherit. */
+451         set_task_comm(tsk, "kthreadd");
+452         ignore_signals(tsk);
+453         set_cpus_allowed_ptr(tsk, cpu_all_mask); <========
+454         set_mems_allowed(node_states[N_MEMORY]);
+455
+456         current->flags |= PF_NOFREEZE;
+457
+458         for (;;) {
+```
+
+why kernel thread created by ‘kthread_create’ still has wrong affinity, even kthread(pid2) has been set with right affinity.
+kthead_create is just a marco to wrapper kthread_create_on_node. In kthread_create_on_node, new kernel thread affinity/cpumask will be set as cpu_all_mask(all cpus), just after it is created. See line 285
+
+```c
+ 13 #define kthread_create(threadfn, data, namefmt, arg...) \
+ 14         kthread_create_on_node(threadfn, data, -1, namefmt, ##arg)
+```
+
+```c
+253 struct task_struct *kthread_create_on_node(int (*threadfn)(void *data),
+254                                            void *data, int node,
+255                                            const char namefmt[],
+256                                            ...)
+257 {
+258         struct kthread_create_info create;
+259
+260         create.threadfn = threadfn;
+261         create.data = data;
+262         create.node = node;
+263         init_completion(&create.done);
+264
+265         spin_lock(&kthread_create_lock);
+266         list_add_tail(&create.list, &kthread_create_list);
+267         spin_unlock(&kthread_create_lock);
+268
+269         wake_up_process(kthreadd_task);
+270         wait_for_completion(&create.done);
+271
+272         if (!IS_ERR(create.result)) {
+273                 static const struct sched_param param = { .sched_priority = 0 };
+274                 va_list args;
+275
+276                 va_start(args, namefmt);
+277                 vsnprintf(create.result->comm, sizeof(create.result->comm),
+278                           namefmt, args);
+279                 va_end(args);
+280                 /*
+281                  * root may have changed our (kthreadd's) priority or CPU mask.
+282                  * The kernel thread should not inherit these properties.
+283                  */
+284                 sched_setscheduler_nocheck(create.result, SCHED_NORMAL, &param);
+285                 set_cpus_allowed_ptr(create.result, cpu_all_mask); <==== chang new kernel thread affinity
+286         }
+287         return create.result;
+```
+
+solution(doing):
+
+set right affinity for pid2 and other kernel threads when they are created.
+
+a bit trouble, cpusmask of isolcpus is stored as in kernel/sche/core.c and is a static variable name ‘cpu_isolated_map’.
+
+I rename it as ‘cpu_isolated_mask’ and export it. Just like other cpu masks(such as cpu_possible_mask, cpu_online_mask()
+
+Posted by Martin Zhang Jul 10th, 2013   gist, isocpus
+

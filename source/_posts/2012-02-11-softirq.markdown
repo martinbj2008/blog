@@ -1,0 +1,177 @@
+---
+layout: post
+title: "softirq"
+date: 2012-02-10 00:00
+comments: true
+categories: [IRQs]
+tags: [kernel, softirq]
+---
+
+## 为什么需要软中断
+
+  引入软中断的目的是为了中断要尽快返回。 把一些不紧急的工作放到下半部里执行。 软中断是下半部的一种实现方式。其他的还有tasklet和workqueue。
+
+## 软中断特点
+
+  软中断特点是可以同时运行在CPU上，而tasklet则是整个系统中只有一个。 软中断和tasklet都不允许睡眠，因此必须避免执行引发睡眠的操作。 workqueue则允许睡眠。
+<!-- more -->
+## 软中断原理
+
+### 原理
+
+    每个cpu有一标志位，硬中断产生时候就将这个标志位置1， 之后硬中断就退出。 CPU调度后，执行软中断，以网卡收报为例。软中断将对应的包处理完成， 然后清除相应的标志位。
+
+### 潜在的问题：
+
+    在cpuA上触发了硬中断，那么就会在cpuA执行软中断。 如果一个网卡接受到大量的数据包，那么就会导致该CPU利用率非常高， 而其他的cpux却相对比较空闲。
+
+### 应对方法
+
+	1. 软件实现
+		goolge patch：将收到的包按流hash，然后分配到不同的cpuB的软中断队列里，并激发cpuB的软中断。
+
+	2. 硬件实现
+		高端的网卡： 如ixgbe 网卡， xlr/xlp的nae等专用平台：网卡（或nae）本身通过参数设置，可以让不同的数据包分别在不同的cpu上触发硬中断上。从而达到将网络包交给到个cpu处理，避免单个cpu过于繁忙。
+
+## 软中断在内核的实现
+
+软中断的数据结构:
+###软中断的类型
+```c
+enum
+{
+    HI_SOFTIRQ=0,
+    TIMER_SOFTIRQ,
+    NET_TX_SOFTIRQ,
+    NET_RX_SOFTIRQ,
+    BLOCK_SOFTIRQ,
+    BLOCK_IOPOLL_SOFTIRQ,
+    TASKLET_SOFTIRQ,
+    SCHED_SOFTIRQ,
+    HRTIMER_SOFTIRQ,
+    RCU_SOFTIRQ, /* Preferable RCU should always be the last softirq */
+    NR_SOFTIRQS
+};
+```
+###每个软中断有一个对应的处理函数。
+```c
+static struct softirq_action softirq_vec[NR_SOFTIRQS] __cacheline_aligned_in_smp;
+    struct softirq_action {
+    void(*action)(struct softirq_action *);
+    };
+```
+### percpu的变量` local_softirq_pending()`, 其每一位对应一个软中断类型。
+X86 和mips存储方式略有不同。
+
+1. X86
+
+  In the file: include/linux/interrupt.h
+
+```c
+  7 typedef struct {
+  8         unsigned int __softirq_pending;
+  9         unsigned int __nmi_count;       /* arch dependent */
+ 10         unsigned int irq0_irqs;
+...
+ 30 } ____cacheline_aligned irq_cpustat_t;
+ ...
+ 32 DECLARE_PER_CPU_SHARED_ALIGNED(irq_cpustat_t, irq_stat);
+ ...
+ 41 #define local_softirq_pending() percpu_read(irq_stat.__softirq_pending)
+```
+
+2. mips
+
+```c
+#define local_softirq_pending()         (local_cpu_data->softirq_pending)
+```
+
+In the file: include/linux/interrupt.h
+
+```c
+#ifndef __ARCH_SET_SOFTIRQ_PENDING <=== only defined for X86.
+#define set_softirq_pending(x) (local_softirq_pending() = (x))
+#define or_softirq_pending(x)  (local_softirq_pending() |= (x))
+#endif
+```
+
+include/linux/irq_cpustat.h
+
+```c
+  /* arch independent irq_stat fields */
+#define local_softirq_pending() \
+        __IRQ_STAT(smp_processor_id(), __softirq_pending)
+
+ 19 #ifndef __ARCH_IRQ_STAT
+ 20 extern irq_cpustat_t irq_stat[];                /* defined in asm/hardirq.h */
+ 21 #define __IRQ_STAT(cpu, member) (irq_stat[cpu].member)
+ 22 #endif
+```
+kernel/softirq.c
+
+```c
+ 50 #ifndef __ARCH_IRQ_STAT
+ 51 irq_cpustat_t irq_stat[NR_CPUS] ____cacheline_aligned;
+ 52 EXPORT_SYMBOL(irq_stat);
+ 53 #endif
+```
+
+### softirq init:
+```c
+719 void __init softirq_init(void)
+720 {
+721         int cpu;
+722 
+723         for_each_possible_cpu(cpu) {
+724                 int i;
+725 
+726                 per_cpu(tasklet_vec, cpu).tail =
+727                         &per_cpu(tasklet_vec, cpu).head;
+728                 per_cpu(tasklet_hi_vec, cpu).tail =
+729                         &per_cpu(tasklet_hi_vec, cpu).head;
+730                 for (i = 0; i < NR_SOFTIRQS; i++)
+731                         INIT_LIST_HEAD(&per_cpu(softirq_work_list[i], cpu));
+732         }
+733 
+734         register_hotcpu_notifier(&remote_softirq_cpu_notifier);
+735 
+736         open_softirq(TASKLET_SOFTIRQ, tasklet_action);
+737         open_softirq(HI_SOFTIRQ, tasklet_hi_action);
+738 }
+```
+```c
+388 void open_softirq(int nr, void (*action)(struct softirq_action *))
+389 {
+390         softirq_vec[nr].action = action;
+391 }
+```
+
+```
+379 void raise_softirq(unsigned int nr)
+380 {
+381         unsigned long flags;
+382 
+383         local_irq_save(flags);
+384         raise_softirq_irqoff(nr);
+385         local_irq_restore(flags);
+386 }
+```
+
+```c
+362 inline void raise_softirq_irqoff(unsigned int nr)
+363 {
+364         __raise_softirq_irqoff(nr);
+365 
+366         /*
+367          * If we're in an interrupt or softirq, we're done
+368          * (this also catches softirq-disabled code). We will
+369          * actually run the softirq once we return from
+370          * the irq or softirq.
+371          *
+372          * Otherwise we wake up ksoftirqd to make sure we
+373          * schedule the softirq soon.
+374          */
+375         if (!in_interrupt())
+376                 wakeup_softirqd();
+377 }
+```

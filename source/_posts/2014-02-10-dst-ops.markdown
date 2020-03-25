@@ -1,0 +1,192 @@
+---
+layout: post
+title: "dst ops"
+date: 2014-02-10 15:31
+comments: true
+categories: [route]
+---
+
+### Call trace
+forward a packet.
+
+```c
+> ip_rcv_finish
+> > ip_route_input_noref
+> > > ip_route_input_slow  
+> > > > fib_lookup 
+> > > > ip_mkroute_input
+> > dst_input(skb)
+```
+
+```c
+> > > > ip_mkroute_input
+> > > > > __mkroute_input
+> > > > > > rth = rt_dst_alloc(...)
+> > > > > > skb_dst_set(skb, &rth->dst);
+```
+<!-- more -->
+
+![case 3b](/images/net/skb_refdst.jpeg)
+```c
+1410 static struct rtable *rt_dst_alloc(struct net_device *dev,
+1411                                    bool nopolicy, bool noxfrm, bool will_cache)
+1412 {
+1413         return dst_alloc(&ipv4_dst_ops, dev, 1, DST_OBSOLETE_FORCE_CHK,
+1414                          (will_cache ? 0 : (DST_HOST | DST_NOCACHE)) |
+1415                          (nopolicy ? DST_NOPOLICY : 0) |
+1416                          (noxfrm ? DST_NOXFRM : 0));
+1417 }
+```
+
+####
+```c
+2711 int __init ip_rt_init(void)
+2712 {
+2713         int rc = 0;
+2714
+2715 #ifdef CONFIG_IP_ROUTE_CLASSID
+2716         ip_rt_acct = __alloc_percpu(256 * sizeof(struct ip_rt_acct), __alignof__(struct ip_rt_acct));
+2717         if (!ip_rt_acct)
+2718                 panic("IP: failed to allocate ip_rt_acct\n");
+2719 #endif
+2720
+2721         ipv4_dst_ops.kmem_cachep =
+2722                 kmem_cache_create("ip_dst_cache", sizeof(struct rtable), 0,
+2723                                   SLAB_HWCACHE_ALIGN|SLAB_PANIC, NULL);
+2724
+2725         ipv4_dst_blackhole_ops.kmem_cachep = ipv4_dst_ops.kmem_cachep;
+```
+
+
+```c
+162 void *dst_alloc(struct dst_ops *ops, struct net_device *dev,
+163                 int initial_ref, int initial_obsolete, unsigned short flags)
+164 {
+165         struct dst_entry *dst;
+166
+167         if (ops->gc && dst_entries_get_fast(ops) > ops->gc_thresh) {
+168                 if (ops->gc(ops))
+169                         return NULL;
+170         }
+171         dst = kmem_cache_alloc(ops->kmem_cachep, GFP_ATOMIC);
+172         if (!dst)
+173                 return NULL;
+174         dst->child = NULL;
+175         dst->dev = dev;
+176         if (dev)
+177                 dev_hold(dev);
+178         dst->ops = ops;
+179         dst_init_metrics(dst, dst_default_metrics, true);
+180         dst->expires = 0UL;
+181         dst->path = dst;
+182         dst->from = NULL;
+183 #ifdef CONFIG_XFRM
+184         dst->xfrm = NULL;
+185 #endif
+186         dst->input = dst_discard;
+187         dst->output = dst_discard;
+188         dst->error = 0;
+189         dst->obsolete = initial_obsolete;
+190         dst->header_len = 0;
+191         dst->trailer_len = 0;
+192 #ifdef CONFIG_IP_ROUTE_CLASSID
+193         dst->tclassid = 0;
+194 #endif
+195         atomic_set(&dst->__refcnt, initial_ref);
+196         dst->__use = 0;
+197         dst->lastuse = jiffies;
+198         dst->flags = flags;
+199         dst->pending_confirm = 0;
+200         dst->next = NULL;
+201         if (!(flags & DST_NOCOUNT))
+202                 dst_entries_add(ops, 1);
+203         return dst;
+204 }
+205 EXPORT_SYMBOL(dst_alloc);
+```
+
+```c
+1517 /* called in rcu_read_lock() section */
+1518 static int __mkroute_input(struct sk_buff *skb,
+1519                            const struct fib_result *res,
+1520                            struct in_device *in_dev,
+1521                            __be32 daddr, __be32 saddr, u32 tos)
+1522 {
+...
+1583         rth = rt_dst_alloc(out_dev->dev,
+1584                            IN_DEV_CONF_GET(in_dev, NOPOLICY),
+1585                            IN_DEV_CONF_GET(out_dev, NOXFRM), do_cache);
+1586         if (!rth) {
+1587                 err = -ENOBUFS;
+1588                 goto cleanup;
+1589         }
+1590
+1591         rth->rt_genid = rt_genid_ipv4(dev_net(rth->dst.dev));
+1592         rth->rt_flags = flags;
+1593         rth->rt_type = res->type;
+1594         rth->rt_is_input = 1;
+1595         rth->rt_iif     = 0;
+1596         rth->rt_pmtu    = 0;
+1597         rth->rt_gateway = 0;
+1598         rth->rt_uses_gateway = 0;
+1599         INIT_LIST_HEAD(&rth->rt_uncached);
+1600
+1601         rth->dst.input = ip_forward;
+1602         rth->dst.output = ip_output;
+1603
+1604         rt_set_nexthop(rth, daddr, res, fnhe, res->fi, res->type, itag);
+1605         skb_dst_set(skb, &rth->dst);
+```
+
+
+### dst functions
+`__refcnt` is the important filed of `struct dst_entry`.
+#### `dst_hold`
+```c
+235 static inline void dst_hold(struct dst_entry *dst)
+236 {
+237         /*
+238          * If your kernel compilation stops here, please check
+239          * __pad_to_align_refcnt declaration in struct dst_entry
+240          */
+241         BUILD_BUG_ON(offsetof(struct dst_entry, __refcnt) & 63);
+242         atomic_inc(&dst->__refcnt);
+243 }
+```
+
+#### `dst_clone` 
+```c
+258 static inline struct dst_entry *dst_clone(struct dst_entry *dst)
+259 {
+260         if (dst)
+261                 atomic_inc(&dst->__refcnt);
+262         return dst;
+263 }
+```
+
+#### `skb_dst_copy`
+```c
+287 static inline void skb_dst_copy(struct sk_buff *nskb, const struct sk_buff *oskb)
+288 {
+289         nskb->_skb_refdst = oskb->_skb_refdst;
+290         if (!(nskb->_skb_refdst & SKB_DST_NOREF))
+291                 dst_clone(skb_dst(nskb));
+292 }
+```
+
+#### dst free
+If nobody is reference the dst, directly free it by `dst_destroy`,
+else put it into the garbage collection list ` dst_garbage.list`.
+```c
+370 static inline void dst_free(struct dst_entry *dst)
+371 {
+372         if (dst->obsolete > 0)
+373                 return;
+374         if (!atomic_read(&dst->__refcnt)) {
+375                 dst = dst_destroy(dst);
+376                 if (!dst)
+377                         return;
+378         }
+379         __dst_free(dst);
+380 }
+```

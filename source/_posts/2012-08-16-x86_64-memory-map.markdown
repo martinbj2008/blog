@@ -1,0 +1,94 @@
+---
+layout: post
+title: "x86_64 Memory Map When Boot"
+date: 2012-08-16 00:00
+comments: true
+categories: [memory]
+tags: [memory]
+---
+
+x86_64 Memory Map When Boot
+<!-- more -->
+
+```
+Linux version 3.6.0-rc1+ (martin@fc17) (gcc version 4.7.0 20120507 (Red Hat 4.7.0-5) (GCC) ) #9 SMP Sun Aug 12 09:42:26 CST 2012
+```
+
+```
+[martin@fc17 Documents]$ cat bios.e820.diff 
+boot.1G.log:BIOS-e820: [mem 0x0000000000000000-0x000000000009fbff] usable
+boot.1G.log:BIOS-e820: [mem 0x000000000009fc00-0x000000000009ffff] reserved
+boot.1G.log:BIOS-e820: [mem 0x00000000000f0000-0x00000000000fffff] reserved
+boot.1G.log:BIOS-e820: [mem 0x0000000000100000-0x000000003ffeffff] usable
+boot.1G.log:BIOS-e820: [mem 0x000000003fff0000-0x000000003fffffff] ACPI data
+boot.1G.log:BIOS-e820: [mem 0x00000000fffc0000-0x00000000ffffffff] reserved
+boot.2G.log:BIOS-e820: [mem 0x0000000000000000-0x000000000009fbff] usable
+boot.2G.log:BIOS-e820: [mem 0x000000000009fc00-0x000000000009ffff] reserved
+boot.2G.log:BIOS-e820: [mem 0x00000000000f0000-0x00000000000fffff] reserved
+boot.2G.log:BIOS-e820: [mem 0x0000000000100000-0x000000007ffeffff] usable
+boot.2G.log:BIOS-e820: [mem 0x000000007fff0000-0x000000007fffffff] ACPI data
+boot.2G.log:BIOS-e820: [mem 0x00000000fffc0000-0x00000000ffffffff] reserved
+boot.4G.log:BIOS-e820: [mem 0x0000000000000000-0x000000000009fbff] usable
+boot.4G.log:BIOS-e820: [mem 0x000000000009fc00-0x000000000009ffff] reserved
+boot.4G.log:BIOS-e820: [mem 0x00000000000f0000-0x00000000000fffff] reserved
+boot.4G.log:BIOS-e820: [mem 0x0000000000100000-0x00000000dffeffff] usable
+boot.4G.log:BIOS-e820: [mem 0x00000000dfff0000-0x00000000dfffffff] ACPI data
+boot.4G.log:BIOS-e820: [mem 0x00000000fffc0000-0x00000000ffffffff] reserved
+boot.4G.log:BIOS-e820: [mem 0x0000000100000000-0x000000011fffffff] usable
+boot.6G.log:BIOS-e820: [mem 0x0000000000000000-0x000000000009fbff] usable
+boot.6G.log:BIOS-e820: [mem 0x000000000009fc00-0x000000000009ffff] reserved
+boot.6G.log:BIOS-e820: [mem 0x00000000000f0000-0x00000000000fffff] reserved
+boot.6G.log:BIOS-e820: [mem 0x0000000000100000-0x00000000dffeffff] usable
+boot.6G.log:BIOS-e820: [mem 0x00000000dfff0000-0x00000000dfffffff] ACPI data
+boot.6G.log:BIOS-e820: [mem 0x00000000fffc0000-0x00000000ffffffff] reserved
+boot.6G.log:BIOS-e820: [mem 0x0000000100000000-0x000000019fffffff] usable
+```
+
+##1G / 2G / 4G / 6G compare:
+
+###Same
+
+```
+  1 boot.1G.log:BIOS-e820: [mem 0x0000000000000000-0x000000000009fbff] usable
+  2 boot.2G.log:BIOS-e820: [mem 0x0000000000000000-0x000000000009fbff] usable
+  3 boot.4G.log:BIOS-e820: [mem 0x0000000000000000-0x000000000009fbff] usable
+  4 boot.6G.log:BIOS-e820: [mem 0x0000000000000000-0x000000000009fbff] usable
+```
+```
+  6 boot.1G.log:BIOS-e820: [mem 0x000000000009fc00-0x000000000009ffff] reserved
+  7 boot.2G.log:BIOS-e820: [mem 0x000000000009fc00-0x000000000009ffff] reserved
+  8 boot.4G.log:BIOS-e820: [mem 0x000000000009fc00-0x000000000009ffff] reserved
+  9 boot.6G.log:BIOS-e820: [mem 0x000000000009fc00-0x000000000009ffff] reserved
+```
+```
+ 11 boot.1G.log:BIOS-e820: [mem 0x00000000000f0000-0x00000000000fffff] reserved
+ 12 boot.2G.log:BIOS-e820: [mem 0x00000000000f0000-0x00000000000fffff] reserved
+ 13 boot.4G.log:BIOS-e820: [mem 0x00000000000f0000-0x00000000000fffff] reserved
+ 14 boot.6G.log:BIOS-e820: [mem 0x00000000000f0000-0x00000000000fffff] reserved
+```
+```
+ 26 boot.1G.log:BIOS-e820: [mem 0x00000000fffc0000-0x00000000ffffffff] reserved
+ 27 boot.2G.log:BIOS-e820: [mem 0x00000000fffc0000-0x00000000ffffffff] reserved
+ 28 boot.4G.log:BIOS-e820: [mem 0x00000000fffc0000-0x00000000ffffffff] reserved
+ 29 boot.6G.log:BIOS-e820: [mem 0x00000000fffc0000-0x00000000ffffffff] reserved
+```
+
+###Diff
+
+```
+ 16 boot.1G.log:BIOS-e820: [mem 0x0000000000100000-0x000000003ffeffff] usable
+ 17 boot.2G.log:BIOS-e820: [mem 0x0000000000100000-0x000000007ffeffff] usable
+ 18 boot.4G.log:BIOS-e820: [mem 0x0000000000100000-0x00000000dffeffff] usable
+ 19 boot.6G.log:BIOS-e820: [mem 0x0000000000100000-0x00000000dffeffff] usable
+```
+```
+ 21 boot.1G.log:BIOS-e820: [mem 0x000000003fff0000-0x000000003fffffff] ACPI data
+ 22 boot.2G.log:BIOS-e820: [mem 0x000000007fff0000-0x000000007fffffff] ACPI data
+ 23 boot.4G.log:BIOS-e820: [mem 0x00000000dfff0000-0x00000000dfffffff] ACPI data
+ 24 boot.6G.log:BIOS-e820: [mem 0x00000000dfff0000-0x00000000dfffffff] ACPI data
+```
+Diff(only 4G, 6G need this range). 
+```
+31 boot.4G.log:BIOS-e820: [mem 0x0000000100000000-0x000000011fffffff] usable
+32 boot.6G.log:BIOS-e820: [mem 0x0000000100000000-0x000000019fffffff] usable
+```
